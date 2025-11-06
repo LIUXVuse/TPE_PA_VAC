@@ -274,7 +274,7 @@ const HolidayDetail: React.FC<HolidayDetailProps> = ({
         </div>
 
         <div className="flex-grow flex flex-col min-h-0">
-          <h3 className="text-xl font-semibold mb-3 text-white">每日排班表</h3>
+          <h3 className="text-xl font-semibold mb-3 text-white">當日值班人員</h3>
           <div className="space-y-3 overflow-y-auto pr-2 flex-grow bg-gray-900/50 p-3 rounded-lg">
             {dates.map((date) => {
               const assignment = assignmentsByDate.get(date);
