@@ -16,7 +16,7 @@ interface HolidayDetailProps {
   onRemoveDailyAssignment: (holidayId: string, date: string) => void;
   onRunLottery: (holidayId: string) => void;
   onClearLottery: (holidayId: string) => void;
-  onUpdateHolidayDetails: (holidayId: string, details: Partial<Pick<HolidayPeriod, 'startDate' | 'endDate' | 'slots'>>) => void;
+  onUpdateHolidayDetails: (holidayId: string, details: Partial<Pick<HolidayPeriod, 'name' | 'startDate' | 'endDate' | 'slots'>>) => void;
   onUpdateDailyLabel: (holidayId: string, date: string, newLabel: string) => void;
 }
 
@@ -54,6 +54,7 @@ const HolidayDetail: React.FC<HolidayDetailProps> = ({
   const [editingPreference, setEditingPreference] = useState<string>('');
   const [isEditingDetails, setIsEditingDetails] = useState(false);
   const [editedDetails, setEditedDetails] = useState({
+    name: holiday.name,
     startDate: holiday.startDate,
     endDate: holiday.endDate,
     slots: holiday.slots,
@@ -62,10 +63,17 @@ const HolidayDetail: React.FC<HolidayDetailProps> = ({
 
   useEffect(() => {
     setIsEditingDetails(false);
-  }, [holiday.id]);
+    setEditedDetails({ // 當 holiday ID 變更時，重設編輯狀態
+        name: holiday.name,
+        startDate: holiday.startDate,
+        endDate: holiday.endDate,
+        slots: holiday.slots,
+    });
+  }, [holiday.id, holiday.name, holiday.startDate, holiday.endDate, holiday.slots]);
 
   const handleDetailsEdit = () => {
     setEditedDetails({
+      name: holiday.name,
       startDate: holiday.startDate,
       endDate: holiday.endDate,
       slots: holiday.slots,
@@ -75,6 +83,7 @@ const HolidayDetail: React.FC<HolidayDetailProps> = ({
 
   const handleDetailsSave = () => {
     onUpdateHolidayDetails(holiday.id, {
+        name: editedDetails.name,
         startDate: editedDetails.startDate,
         endDate: editedDetails.endDate,
         slots: Number(editedDetails.slots),
@@ -203,6 +212,10 @@ const HolidayDetail: React.FC<HolidayDetailProps> = ({
       </div>
       { isEditingDetails ? (
          <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 bg-gray-700/50 p-3 rounded-lg">
+            <div className="sm:col-span-3">
+              <label className="text-xs text-gray-400">假期名稱</label>
+              <input type="text" name="name" value={editedDetails.name} onChange={handleDetailChange} className="w-full bg-gray-600 border border-gray-500 rounded-md px-2 py-1.5 text-white" />
+            </div>
             <div>
               <label className="text-xs text-gray-400">起始日</label>
               <input type="date" name="startDate" value={editedDetails.startDate} onChange={handleDetailChange} className="w-full bg-gray-600 border border-gray-500 rounded-md px-2 py-1.5 text-white" />

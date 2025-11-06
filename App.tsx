@@ -97,6 +97,30 @@ const App: React.FC = () => {
       }))
     );
   }, []);
+  
+  const updateTeamMember = useCallback((memberId: string, newName: string) => {
+    if (!newName.trim()) return;
+
+    setTeamMembers(prev =>
+      prev.map(member =>
+        member.id === memberId ? { ...member, name: newName } : member
+      )
+    );
+
+    setHolidays(prevHolidays =>
+      prevHolidays.map(holiday => ({
+        ...holiday,
+        applications: holiday.applications.map(app =>
+          app.memberId === memberId ? { ...app, memberName: newName } : app
+        ),
+        ...(holiday.dailyAssignments && {
+          dailyAssignments: holiday.dailyAssignments.map(da =>
+            da.memberId === memberId ? { ...da, memberName: newName } : da
+          )
+        })
+      }))
+    );
+  }, []);
 
   const addHoliday = useCallback((name: string, startDate: string, endDate: string, slots: number, isSpecialLottery: boolean) => {
     if (name.trim() === '' || slots <= 0) return;
@@ -134,7 +158,7 @@ const App: React.FC = () => {
     setHolidays(reorderedHolidays);
   }, []);
 
-  const updateHolidayDetails = useCallback((holidayId: string, details: Partial<Pick<HolidayPeriod, 'startDate' | 'endDate' | 'slots'>>) => {
+  const updateHolidayDetails = useCallback((holidayId: string, details: Partial<Pick<HolidayPeriod, 'name' | 'startDate' | 'endDate' | 'slots'>>) => {
     setHolidays(prev => 
       prev.map(h => 
         h.id === holidayId ? { ...h, ...details } : h
@@ -411,7 +435,12 @@ const App: React.FC = () => {
                 </div>
             </div>
 
-            <TeamMemberManager members={teamMembers} onAddMember={addTeamMember} onRemoveMember={removeTeamMember} />
+            <TeamMemberManager 
+              members={teamMembers} 
+              onAddMember={addTeamMember} 
+              onRemoveMember={removeTeamMember} 
+              onUpdateMember={updateTeamMember}
+            />
             <HolidayManager
               holidays={holidays}
               selectedHolidayId={selectedHolidayId}
