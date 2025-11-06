@@ -1,0 +1,268 @@
+import React, { useState, useCallback, useMemo } from 'react';
+import { TeamMember, HolidayPeriod, Application, DailyAssignment } from './types';
+import TeamMemberManager from './components/TeamMemberManager';
+import HolidayManager from './components/HolidayManager';
+import HolidayDetail from './components/HolidayDetail';
+
+const App: React.FC = () => {
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([
+    { id: 'tm1', name: '王小明' },
+    { id: 'tm2', name: '陳大文' },
+    { id: 'tm3', name: '林美麗' },
+    { id: 'tm4', name: '張偉強' },
+    { id: 'tm5', name: '李大膽' },
+    { id: 'tm6', name: '趙鐵柱' },
+  ]);
+
+  const [holidays, setHolidays] = useState<HolidayPeriod[]>([
+    {
+      id: 'h1',
+      name: '2025 新年',
+      startDate: '2025-01-01',
+      endDate: '2025-01-03',
+      slots: 2,
+      applications: [
+        { id: 'app1', memberId: 'tm1', memberName: '王小明', preference: 2 },
+        { id: 'app2', memberId: 'tm3', memberName: '林美麗', preference: 5 },
+        { id: 'app3', memberId: 'tm4', memberName: '張偉強', preference: 1 },
+      ],
+      isSpecialLottery: false,
+    },
+    {
+      id: 'h2',
+      name: '春節假期',
+      startDate: '2025-02-08',
+      endDate: '2025-02-13',
+      slots: 1, // Per day
+      applications: [],
+      isSpecialLottery: true,
+      dailyAssignments: [
+        { date: '2025-02-08', memberId: 'tm2', memberName: '陳大文', type: 'volunteer' },
+        { date: '2025-02-10', memberId: 'tm4', memberName: '張偉強', type: 'volunteer' },
+      ],
+    },
+  ]);
+
+  const [selectedHolidayId, setSelectedHolidayId] = useState<string | null>('h1');
+  const [defaultPreference, setDefaultPreference] = useState(5);
+
+  const addTeamMember = useCallback((name: string) => {
+    if (name.trim() === '') return;
+    const newMember: TeamMember = { id: crypto.randomUUID(), name };
+    setTeamMembers(prev => [...prev, newMember]);
+  }, []);
+
+  const removeTeamMember = useCallback((id: string) => {
+    setTeamMembers(prev => prev.filter(member => member.id !== id));
+    setHolidays(prevHolidays => 
+      prevHolidays.map(holiday => ({
+        ...holiday,
+        applications: holiday.applications.filter(app => app.memberId !== id),
+        ...(holiday.dailyAssignments && {
+          dailyAssignments: holiday.dailyAssignments.filter(da => da.memberId !== id)
+        })
+      }))
+    );
+  }, []);
+
+  const addHoliday = useCallback((name: string, startDate: string, endDate: string, slots: number, isSpecialLottery: boolean) => {
+    if (name.trim() === '' || slots <= 0) return;
+    const newHoliday: HolidayPeriod = {
+      id: crypto.randomUUID(),
+      name,
+      startDate,
+      endDate,
+      slots,
+      applications: [],
+      isSpecialLottery,
+      ...(isSpecialLottery && { dailyAssignments: [] }),
+    };
+    setHolidays(prev => [...prev, newHoliday]);
+  }, []);
+  
+  const removeHoliday = useCallback((id: string) => {
+    setHolidays(prev => prev.filter(holiday => holiday.id !== id));
+    if (selectedHolidayId === id) {
+      setSelectedHolidayId(null);
+    }
+  }, [selectedHolidayId]);
+
+  const addApplication = useCallback((holidayId: string, memberId: string, preference: number) => {
+    const member = teamMembers.find(m => m.id === memberId);
+    if (!member) return;
+
+    setHolidays(prevHolidays => {
+      return prevHolidays.map(holiday => {
+        if (holiday.id === holidayId) {
+          if (holiday.applications.some(app => app.memberId === memberId)) {
+            alert(`${member.name} 已經申請過这个假期了。`);
+            return holiday;
+          }
+          const newApplication: Application = {
+            id: crypto.randomUUID(),
+            memberId,
+            memberName: member.name,
+            preference,
+          };
+          return { ...holiday, applications: [...holiday.applications, newApplication] };
+        }
+        return holiday;
+      });
+    });
+  }, [teamMembers]);
+
+  const removeApplication = useCallback((holidayId: string, applicationId: string) => {
+    setHolidays(prevHolidays => 
+      prevHolidays.map(holiday => 
+        holiday.id === holidayId 
+          ? { ...holiday, applications: holiday.applications.filter(app => app.id !== applicationId) } 
+          : holiday
+      )
+    );
+  }, []);
+
+  const addDailyAssignment = useCallback((holidayId: string, memberId: string, date: string) => {
+    const member = teamMembers.find(m => m.id === memberId);
+    if (!member) return;
+
+    setHolidays(prev => prev.map(h => {
+      if (h.id === holidayId) {
+        const newAssignment: DailyAssignment = { date, memberId, memberName: member.name, type: 'volunteer' };
+        return { ...h, dailyAssignments: [...(h.dailyAssignments || []), newAssignment] };
+      }
+      return h;
+    }));
+  }, [teamMembers]);
+
+  const removeDailyAssignment = useCallback((holidayId: string, date: string) => {
+    setHolidays(prev => prev.map(h => 
+      h.id === holidayId 
+        ? { ...h, dailyAssignments: h.dailyAssignments?.filter(da => da.date !== date && da.type === 'volunteer') } 
+        : h
+    ));
+  }, []);
+
+  const getDatesBetween = (startDate: string, endDate: string) => {
+    const dates = [];
+    let currentDate = new Date(startDate);
+    const end = new Date(endDate);
+    while (currentDate <= end) {
+      dates.push(currentDate.toISOString().split('T')[0]);
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+    return dates;
+  };
+  
+  const runLottery = useCallback((holidayId: string) => {
+    setHolidays(prevHolidays => {
+      const holiday = prevHolidays.find(h => h.id === holidayId);
+      if (!holiday || !holiday.isSpecialLottery) return prevHolidays;
+
+      const allDates = getDatesBetween(holiday.startDate, holiday.endDate);
+      const assignedDates = new Set(holiday.dailyAssignments?.map(da => da.date));
+      const unassignedDates = allDates.filter(d => !assignedDates.has(d));
+
+      const assignedMemberIds = new Set(holiday.dailyAssignments?.map(da => da.memberId));
+      const availableMembers = teamMembers.filter(m => !assignedMemberIds.has(m.id));
+
+      if (unassignedDates.length === 0 || availableMembers.length === 0) return prevHolidays;
+
+      const shuffledMembers = [...availableMembers].sort(() => 0.5 - Math.random());
+      
+      const newAssignments: DailyAssignment[] = [];
+      const slotsToFill = Math.min(unassignedDates.length, shuffledMembers.length);
+
+      for(let i=0; i < slotsToFill; i++) {
+        const member = shuffledMembers[i];
+        const date = unassignedDates[i];
+        newAssignments.push({ date, memberId: member.id, memberName: member.name, type: 'lottery' });
+      }
+
+      return prevHolidays.map(h => 
+        h.id === holidayId 
+          ? { ...h, dailyAssignments: [...(h.dailyAssignments || []), ...newAssignments] } 
+          : h
+      );
+    });
+  }, [teamMembers]);
+
+  const clearLottery = useCallback((holidayId: string) => {
+    setHolidays(prevHolidays => 
+      prevHolidays.map(h => 
+        h.id === holidayId 
+          ? { ...h, dailyAssignments: h.dailyAssignments?.filter(da => da.type !== 'lottery') } 
+          : h
+      )
+    );
+  }, []);
+
+  const selectedHoliday = useMemo(() => holidays.find(h => h.id === selectedHolidayId), [holidays, selectedHolidayId]);
+
+  return (
+    <div className="min-h-screen bg-gray-900 p-4 sm:p-6 lg:p-8">
+      <header className="text-center mb-10">
+        <h1 className="text-4xl sm:text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-600">
+          快樂署北PA假日抽前系統
+        </h1>
+        <p className="text-gray-400 mt-2">透過期望排名或特殊抽籤模式管理團隊的假期排程。</p>
+      </header>
+
+      <main className="grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-7xl mx-auto">
+        <div className="lg:col-span-1 flex flex-col gap-8">
+          <div className="bg-gray-800 p-6 rounded-xl border border-gray-700 shadow-lg">
+            <h2 className="text-2xl font-bold mb-4 text-white">
+              全域設定
+            </h2>
+            <label htmlFor="default-pref" className="block text-sm font-medium text-gray-300">
+              預設權重
+            </label>
+            <input
+              id="default-pref"
+              type="number"
+              value={defaultPreference}
+              onChange={(e) => setDefaultPreference(Math.max(1, Number(e.target.value)))}
+              min="1"
+              className="mt-1 w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <TeamMemberManager 
+            members={teamMembers} 
+            onAddMember={addTeamMember} 
+            onRemoveMember={removeTeamMember}
+          />
+          <HolidayManager 
+            holidays={holidays}
+            selectedHolidayId={selectedHolidayId}
+            onAddHoliday={addHoliday}
+            onRemoveHoliday={removeHoliday}
+            onSelectHoliday={setSelectedHolidayId}
+          />
+        </div>
+
+        <div className="lg:col-span-2">
+          {selectedHoliday ? (
+             <HolidayDetail 
+                key={selectedHoliday.id}
+                holiday={selectedHoliday}
+                allHolidays={holidays}
+                teamMembers={teamMembers}
+                defaultPreference={defaultPreference}
+                onAddApplication={addApplication}
+                onRemoveApplication={removeApplication}
+                onAddDailyAssignment={addDailyAssignment}
+                onRemoveDailyAssignment={removeDailyAssignment}
+                onRunLottery={runLottery}
+                onClearLottery={clearLottery}
+             />
+          ) : (
+            <div className="h-full flex items-center justify-center bg-gray-800 rounded-xl p-6 border border-gray-700">
+                <p className="text-gray-400 text-lg">請選擇一個假期以查看詳細資訊。</p>
+            </div>
+          )}
+        </div>
+      </main>
+    </div>
+  );
+};
+
+export default App;
