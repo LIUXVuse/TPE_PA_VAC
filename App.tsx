@@ -370,7 +370,7 @@ const App: React.FC = () => {
       <div className="min-h-screen container mx-auto p-4 md:p-8">
         <header className="mb-8 flex justify-between items-center">
           <div>
-            <h1 className="text-4xl font-bold text-white">快樂署北PA假日抽前系統</h1>
+            <h1 className="text-4xl font-bold text-white">快樂署北PA假日抽籤許願系統</h1>
             <p className="text-gray-400 mt-1">一個公平、透明的假期排班解決方案。</p>
           </div>
           <button 
