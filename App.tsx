@@ -4,10 +4,23 @@ import TeamMemberManager from './components/TeamMemberManager';
 import HolidayManager from './components/HolidayManager';
 import HolidayDetail from './components/HolidayDetail';
 
+const getDatesBetween = (startDate: string, endDate: string): string[] => {
+  const dates: string[] = [];
+  if (!startDate || !endDate) return dates;
+  let currentDate = new Date(new Date(startDate).toISOString().slice(0, 10));
+  const end = new Date(new Date(endDate).toISOString().slice(0, 10));
+
+  while (currentDate <= end) {
+    dates.push(currentDate.toISOString().split('T')[0]);
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+  return dates;
+};
+
 const App: React.FC = () => {
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [holidays, setHolidays] = useState<HolidayPeriod[]>([]);
-  const [defaultPreference, setDefaultPreference] = useState(5);
+  const [defaultPreference, setDefaultPreference] = useState(8);
   const [selectedHolidayId, setSelectedHolidayId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -22,7 +35,7 @@ const App: React.FC = () => {
         const data = await response.json();
         setTeamMembers(data.teamMembers || []);
         setHolidays(data.holidays || []);
-        setDefaultPreference(data.defaultPreference || 5);
+        setDefaultPreference(data.defaultPreference || 8);
         if (data.holidays && data.holidays.length > 0 && !selectedHolidayId) {
           setSelectedHolidayId(data.holidays[0].id);
         }
@@ -91,8 +104,18 @@ const App: React.FC = () => {
       slots,
       applications: [],
       isSpecialLottery,
-      ...(isSpecialLottery && { dailyAssignments: [] }),
     };
+
+    if (isSpecialLottery) {
+        const dates = getDatesBetween(startDate, endDate);
+        const chineseDayLabels = ["除夕", "初一", "初二", "初三", "初四", "初五", "初六", "初七", "初八", "初九", "初十"];
+        newHoliday.dailyLabels = {};
+        newHoliday.dailyAssignments = [];
+        dates.forEach((date, index) => {
+            newHoliday.dailyLabels[date] = chineseDayLabels[index] || `第 ${index + 1} 天`;
+        });
+    }
+
     setHolidays(prev => [...prev, newHoliday]);
   }, []);
   
@@ -112,6 +135,23 @@ const App: React.FC = () => {
       prev.map(h => 
         h.id === holidayId ? { ...h, ...details } : h
       )
+    );
+  }, []);
+
+  const updateDailyLabel = useCallback((holidayId: string, date: string, newLabel: string) => {
+    setHolidays(prev =>
+        prev.map(h => {
+            if (h.id === holidayId && h.dailyLabels) {
+                return {
+                    ...h,
+                    dailyLabels: {
+                        ...h.dailyLabels,
+                        [date]: newLabel,
+                    },
+                };
+            }
+            return h;
+        })
     );
   }, []);
 
@@ -186,17 +226,6 @@ const App: React.FC = () => {
     ));
   }, []);
   
-  const getDatesBetween = (startDate: string, endDate: string) => {
-    const dates = [];
-    let currentDate = new Date(startDate);
-    const end = new Date(endDate);
-    while (currentDate <= end) {
-      dates.push(currentDate.toISOString().split('T')[0]);
-      currentDate.setDate(currentDate.getDate() + 1);
-    }
-    return dates;
-  };
-  
   const runLottery = useCallback((holidayId: string) => {
     setHolidays(prevHolidays => {
       const holiday = prevHolidays.find(h => h.id === holidayId);
@@ -240,6 +269,71 @@ const App: React.FC = () => {
     );
   }, []);
 
+  const autoAssignHolidays = useCallback(() => {
+    setHolidays(currentHolidays => {
+        let holidaysCopy = JSON.parse(JSON.stringify(currentHolidays));
+
+        const getYear = (dateStr: string) => new Date(dateStr).getFullYear();
+
+        // 1. 計算每位成員已批准的假期數量
+        const memberHolidayCounts: { [memberId: string]: number } = teamMembers.reduce((acc, member) => ({ ...acc, [member.id]: 0 }), {});
+        holidaysCopy.forEach((h: HolidayPeriod) => {
+            if (h.isSpecialLottery || !h.applications) return;
+            const sortedApps = [...h.applications].sort((a, b) => a.preference - b.preference);
+            sortedApps.slice(0, h.slots).forEach(app => {
+                memberHolidayCounts[app.memberId]++;
+            });
+        });
+
+        // 2. 按假期數量升序排列成員
+        const sortedMembers = [...teamMembers].sort((a, b) => memberHolidayCounts[a.id] - memberHolidayCounts[b.id]);
+
+        // 3. 遍歷成員進行分配
+        for (const member of sortedMembers) {
+            // 找出該成員今年可用的最低權重 (最大數字)
+            const currentYear = new Date().getFullYear();
+            const usedPrefs = holidaysCopy
+                .filter((h: HolidayPeriod) => !h.isSpecialLottery && h.startDate && getYear(h.startDate) === currentYear)
+                .flatMap((h: HolidayPeriod) => h.applications)
+                .filter((app: Application) => app.memberId === member.id)
+                .map((app: Application) => app.preference);
+
+            const allPossiblePrefs = Array.from({ length: defaultPreference }, (_, i) => i + 1);
+            const availablePrefs = allPossiblePrefs.filter(p => !usedPrefs.includes(p));
+            availablePrefs.sort((a, b) => b - a); // 從最大數字 (最低權重) 開始
+
+            if (availablePrefs.length === 0) continue;
+
+            // 尋找一個有空位且該成員尚未申請的假期
+            const availableHoliday = holidaysCopy.find((h: HolidayPeriod) =>
+                !h.isSpecialLottery &&
+                h.applications.length < h.slots &&
+                !h.applications.some(app => app.memberId === member.id) &&
+                h.startDate && getYear(h.startDate) === currentYear
+            );
+
+            if (availableHoliday && availablePrefs[0]) {
+                const newApplication: Application = {
+                    id: crypto.randomUUID(),
+                    memberId: member.id,
+                    memberName: member.name,
+                    preference: availablePrefs[0], // 使用最低權重
+                };
+                
+                // 更新 holidaysCopy
+                holidaysCopy = holidaysCopy.map((h: HolidayPeriod) => 
+                    h.id === availableHoliday.id 
+                        ? { ...h, applications: [...h.applications, newApplication] } 
+                        : h
+                );
+            }
+        }
+        return holidaysCopy;
+    });
+    alert('已為休假最少的成員自動分配剩餘假期名額。');
+  }, [teamMembers, defaultPreference]);
+
+
   const selectedHoliday = useMemo(() => holidays.find(h => h.id === selectedHolidayId), [holidays, selectedHolidayId]);
 
   if (isLoading) {
@@ -260,7 +354,7 @@ const App: React.FC = () => {
         <h1 className="text-4xl sm:text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-600">
           快樂署北PA假日抽前系統
         </h1>
-        <p className="text-gray-400 mt-2">透過期望排名或特殊抽籤模式管理團隊的假期排程。</p>
+        <p className="text-gray-400 mt-2">透過權重排名或特殊抽籤模式管理團隊的假期排程。</p>
       </header>
 
       <main className="grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-7xl mx-auto">
@@ -270,16 +364,23 @@ const App: React.FC = () => {
               全域設定
             </h2>
             <label htmlFor="default-pref" className="block text-sm font-medium text-gray-300">
-              預設權重
+              預設權重 (及權重上限)
             </label>
             <input
               id="default-pref"
               type="number"
               value={defaultPreference}
-              onChange={(e) => setDefaultPreference(Math.max(1, Number(e.target.value)))}
+              onChange={(e) => setDefaultPreference(Math.max(1, Math.min(10, Number(e.target.value))))}
               min="1"
+              max="10"
               className="mt-1 w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
+             <button
+              onClick={autoAssignHolidays}
+              className="mt-4 w-full bg-indigo-600 text-white font-semibold px-4 py-2 rounded-md hover:bg-indigo-500 transition-colors duration-200"
+            >
+              自動分配剩餘假期
+            </button>
           </div>
           <TeamMemberManager 
             members={teamMembers} 
@@ -312,6 +413,7 @@ const App: React.FC = () => {
                 onRunLottery={runLottery}
                 onClearLottery={clearLottery}
                 onUpdateHolidayDetails={updateHolidayDetails}
+                onUpdateDailyLabel={updateDailyLabel}
              />
           ) : (
             <div className="h-full flex items-center justify-center bg-gray-800 rounded-xl p-6 border border-gray-700">

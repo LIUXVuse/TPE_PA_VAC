@@ -26,4 +26,5 @@ export interface HolidayPeriod {
   applications: Application[];
   isSpecialLottery?: boolean;
   dailyAssignments?: DailyAssignment[];
+  dailyLabels?: { [date: string]: string };
 }

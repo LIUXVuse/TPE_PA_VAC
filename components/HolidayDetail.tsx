@@ -17,6 +17,7 @@ interface HolidayDetailProps {
   onRunLottery: (holidayId: string) => void;
   onClearLottery: (holidayId: string) => void;
   onUpdateHolidayDetails: (holidayId: string, details: Partial<Pick<HolidayPeriod, 'startDate' | 'endDate' | 'slots'>>) => void;
+  onUpdateDailyLabel: (holidayId: string, date: string, newLabel: string) => void;
 }
 
 const getDatesBetween = (startDate: string, endDate: string): string[] => {
@@ -32,8 +33,6 @@ const getDatesBetween = (startDate: string, endDate: string): string[] => {
   return dates;
 };
 
-const chineseDayLabels = ["初一", "初二", "初三", "初四", "初五", "初六", "初七", "初八", "初九", "初十", "十一", "十二", "十三", "十四", "十五"];
-
 const HolidayDetail: React.FC<HolidayDetailProps> = ({ 
   holiday,
   allHolidays,
@@ -46,7 +45,8 @@ const HolidayDetail: React.FC<HolidayDetailProps> = ({
   onRemoveDailyAssignment,
   onRunLottery, 
   onClearLottery,
-  onUpdateHolidayDetails
+  onUpdateHolidayDetails,
+  onUpdateDailyLabel
 }) => {
   const [selectedMemberId, setSelectedMemberId] = useState('');
   const [preference, setPreference] = useState<string>(String(defaultPreference));
@@ -58,6 +58,7 @@ const HolidayDetail: React.FC<HolidayDetailProps> = ({
     endDate: holiday.endDate,
     slots: holiday.slots,
   });
+  const [editingLabel, setEditingLabel] = useState<{date: string; text: string} | null>(null);
 
   useEffect(() => {
     setIsEditingDetails(false);
@@ -85,6 +86,18 @@ const HolidayDetail: React.FC<HolidayDetailProps> = ({
     const { name, value } = e.target;
     setEditedDetails(prev => ({ ...prev, [name]: value }));
   };
+
+  const handleLabelEdit = (date: string, currentLabel: string) => {
+    setEditingLabel({ date, text: currentLabel });
+  };
+
+  const handleLabelSave = () => {
+    if (editingLabel) {
+      onUpdateDailyLabel(holiday.id, editingLabel.date, editingLabel.text);
+      setEditingLabel(null);
+    }
+  };
+
 
   const assignedMemberIds = useMemo(() => {
     const memberIds = new Set<string>();
@@ -117,7 +130,7 @@ const HolidayDetail: React.FC<HolidayDetailProps> = ({
       .map(app => app.preference);
     
     const uniqueUsedPrefs = new Set(usedPrefs);
-    const allPossiblePrefs = Array.from({ length: 10 }, (_, i) => i + 1);
+    const allPossiblePrefs = Array.from({ length: defaultPreference }, (_, i) => i + 1);
     
     const available = allPossiblePrefs.filter(p => !uniqueUsedPrefs.has(p));
     if(isEditing && currentPref) {
@@ -125,7 +138,7 @@ const HolidayDetail: React.FC<HolidayDetailProps> = ({
       available.sort((a,b) => a-b);
     }
     return available;
-  }, [allHolidays, holiday.startDate]);
+  }, [allHolidays, holiday.startDate, defaultPreference]);
 
   const newApplicationPrefs = useMemo(() => getAvailablePreferences(selectedMemberId, false), [selectedMemberId, getAvailablePreferences]);
   
@@ -133,13 +146,16 @@ const HolidayDetail: React.FC<HolidayDetailProps> = ({
     if (selectedMemberId && newApplicationPrefs.length > 0) {
         const currentPrefNumber = Number(preference);
         if (!newApplicationPrefs.includes(currentPrefNumber)) {
-            if (newApplicationPrefs.includes(defaultPreference)) {
+            if (newApplicationPrefs.includes(defaultPreference) && defaultPreference <= newApplicationPrefs[newApplicationPrefs.length - 1]) {
                 setPreference(String(defaultPreference));
             } else {
                 setPreference(String(newApplicationPrefs[0]));
             }
         }
+    } else if (selectedMemberId) {
+       setPreference('');
     }
+    
     if (!selectedMemberId) {
         setPreference(String(defaultPreference));
     }
@@ -260,14 +276,34 @@ const HolidayDetail: React.FC<HolidayDetailProps> = ({
         <div className="flex-grow flex flex-col min-h-0">
           <h3 className="text-xl font-semibold mb-3 text-white">每日排班表</h3>
           <div className="space-y-3 overflow-y-auto pr-2 flex-grow bg-gray-900/50 p-3 rounded-lg">
-            {dates.map((date, index) => {
+            {dates.map((date) => {
               const assignment = assignmentsByDate.get(date);
-              const dayLabel = chineseDayLabels[index] || `第 ${index + 1} 天`;
+              const dayLabel = holiday.dailyLabels?.[date] || date;
+              const isEditingLabel = editingLabel?.date === date;
               return (
                 <div key={date} className="grid grid-cols-3 gap-4 items-center bg-gray-700 p-3 rounded-md">
                   <div className="font-semibold text-gray-300">
                     <p>{date}</p>
-                    <p className="text-sm text-blue-300">{dayLabel}</p>
+                    <div className="text-sm text-blue-300 flex items-center gap-2">
+                       {isEditingLabel ? (
+                          <input
+                            type="text"
+                            value={editingLabel.text}
+                            onChange={(e) => setEditingLabel({ ...editingLabel, text: e.target.value })}
+                            className="bg-gray-800 border-b border-blue-400 text-white w-full"
+                            onBlur={handleLabelSave}
+                            onKeyDown={(e) => e.key === 'Enter' && handleLabelSave()}
+                            autoFocus
+                          />
+                        ) : (
+                          <>
+                            <span>{dayLabel}</span>
+                            <button onClick={() => handleLabelEdit(date, dayLabel)} className="text-gray-500 hover:text-blue-300">
+                               <PencilIcon className="w-3.5 h-3.5"/>
+                            </button>
+                          </>
+                        )}
+                    </div>
                   </div>
                   <div className="col-span-2 flex items-center justify-between">
                     {assignment ? (
@@ -333,7 +369,7 @@ const HolidayDetail: React.FC<HolidayDetailProps> = ({
             disabled={!selectedMemberId || newApplicationPrefs.length === 0}
             className="md:col-span-1 bg-gray-600 border border-gray-500 rounded-md px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <option value="" disabled>期望排名</option>
+            <option value="" disabled>權重排名</option>
             {selectedMemberId ? 
               newApplicationPrefs.length > 0 ? 
                 newApplicationPrefs.map(p => (
@@ -356,7 +392,7 @@ const HolidayDetail: React.FC<HolidayDetailProps> = ({
 
       <div>
         <h3 className="text-xl font-semibold mb-3 text-white">目前登記狀況</h3>
-        <p className="text-sm text-gray-500 mb-3 -mt-2">按期望排名數字正序排列（數字越小，候補順位越優先）。</p>
+        <p className="text-sm text-gray-500 mb-3 -mt-2">按權重排名數字正序排列（數字越小，順位越優先）。</p>
         <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
           {sortedApplications.length > 0 ? sortedApplications.map((app, index) => {
             const isApproved = index < holiday.slots;
