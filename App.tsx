@@ -319,7 +319,8 @@ const App: React.FC = () => {
             const availablePrefs = allPossiblePrefs.filter(p => !usedPrefs.includes(p));
             
             if (availablePrefs.length > 0) {
-                const preferenceToUse = Math.max(...availablePrefs); // Use the lowest priority preference
+                // 原本是取最大值(最低優先)，改為隨機選取一個可用的權重以增加公平性
+                const preferenceToUse = availablePrefs[Math.floor(Math.random() * availablePrefs.length)];
                 const member = teamMembers.find(m => m.id === leastHolidayMemberId);
                 if (member) {
                     holiday.applications.push({
