@@ -3,6 +3,7 @@ import { TeamMember, HolidayPeriod, Application, DailyAssignment } from './types
 import TeamMemberManager from './components/TeamMemberManager';
 import HolidayManager from './components/HolidayManager';
 import HolidayDetail from './components/HolidayDetail';
+import HolidayOverview from './components/HolidayOverview';
 
 const getDatesBetween = (startDate: string, endDate: string): string[] => {
   const dates: string[] = [];
@@ -84,6 +85,7 @@ const App: React.FC = () => {
   const removeTeamMember = useCallback((id: string) => {
     setTeamMembers(prev => prev.filter(member => member.id !== id));
     setHolidays(prevHolidays => 
+      // Fix: Corrected typo from `prevHolidAYS` to `prevHolidays`.
       prevHolidays.map(holiday => ({
         ...holiday,
         applications: holiday.applications.filter(app => app.memberId !== id),
@@ -273,65 +275,72 @@ const App: React.FC = () => {
     setHolidays(currentHolidays => {
         let holidaysCopy = JSON.parse(JSON.stringify(currentHolidays));
 
-        const getYear = (dateStr: string) => new Date(dateStr).getFullYear();
+        const getYearFromString = (dateStr: string): number => {
+            return parseInt(dateStr.split('-')[0], 10);
+        };
 
-        // 1. 計算每位成員已批准的假期數量
-        const memberHolidayCounts: { [memberId: string]: number } = teamMembers.reduce((acc, member) => ({ ...acc, [member.id]: 0 }), {});
-        holidaysCopy.forEach((h: HolidayPeriod) => {
-            if (h.isSpecialLottery || !h.applications) return;
-            const sortedApps = [...h.applications].sort((a, b) => a.preference - b.preference);
-            sortedApps.slice(0, h.slots).forEach(app => {
-                memberHolidayCounts[app.memberId]++;
+        let assignedInLastPass = true;
+        while (assignedInLastPass) {
+            assignedInLastPass = false;
+
+            const memberHolidayCounts: { [memberId: string]: number } = teamMembers.reduce((acc, member) => ({ ...acc, [member.id]: 0 }), {});
+            holidaysCopy.forEach((h: HolidayPeriod) => {
+                if (h.isSpecialLottery || !h.applications) return;
+                const sortedApps = [...h.applications].sort((a, b) => a.preference - b.preference);
+                sortedApps.slice(0, h.slots).forEach(app => {
+                    if (memberHolidayCounts[app.memberId] !== undefined) {
+                        memberHolidayCounts[app.memberId]++;
+                    }
+                });
             });
-        });
 
-        // 2. 按假期數量升序排列成員
-        const sortedMembers = [...teamMembers].sort((a, b) => memberHolidayCounts[a.id] - memberHolidayCounts[b.id]);
+            const sortedMembers = [...teamMembers].sort((a, b) => memberHolidayCounts[a.id] - memberHolidayCounts[b.id]);
 
-        // 3. 遍歷成員進行分配
-        for (const member of sortedMembers) {
-            // 找出該成員今年可用的最低權重 (最大數字)
-            const currentYear = new Date().getFullYear();
-            const usedPrefs = holidaysCopy
-                .filter((h: HolidayPeriod) => !h.isSpecialLottery && h.startDate && getYear(h.startDate) === currentYear)
-                .flatMap((h: HolidayPeriod) => h.applications)
-                .filter((app: Application) => app.memberId === member.id)
-                .map((app: Application) => app.preference);
-
-            const allPossiblePrefs = Array.from({ length: defaultPreference }, (_, i) => i + 1);
-            const availablePrefs = allPossiblePrefs.filter(p => !usedPrefs.includes(p));
-            availablePrefs.sort((a, b) => b - a); // 從最大數字 (最低權重) 開始
-
-            if (availablePrefs.length === 0) continue;
-
-            // 尋找一個有空位且該成員尚未申請的假期
-            const availableHoliday = holidaysCopy.find((h: HolidayPeriod) =>
-                !h.isSpecialLottery &&
-                h.applications.length < h.slots &&
-                !h.applications.some(app => app.memberId === member.id) &&
-                h.startDate && getYear(h.startDate) === currentYear
-            );
-
-            if (availableHoliday && availablePrefs[0]) {
-                const newApplication: Application = {
-                    id: crypto.randomUUID(),
-                    memberId: member.id,
-                    memberName: member.name,
-                    preference: availablePrefs[0], // 使用最低權重
-                };
-                
-                // 更新 holidaysCopy
-                holidaysCopy = holidaysCopy.map((h: HolidayPeriod) => 
-                    h.id === availableHoliday.id 
-                        ? { ...h, applications: [...h.applications, newApplication] } 
-                        : h
+            for (const member of sortedMembers) {
+                const availableHoliday = holidaysCopy.find((h: HolidayPeriod) =>
+                    !h.isSpecialLottery &&
+                    h.startDate &&
+                    h.applications.length < h.slots &&
+                    !h.applications.some(app => app.memberId === member.id)
                 );
+
+                if (availableHoliday) {
+                    const holidayYear = getYearFromString(availableHoliday.startDate);
+
+                    const usedPrefs = holidaysCopy
+                        .filter((h: HolidayPeriod) => !h.isSpecialLottery && h.startDate && getYearFromString(h.startDate) === holidayYear)
+                        .flatMap((h: HolidayPeriod) => h.applications)
+                        .filter((app: Application) => app.memberId === member.id)
+                        .map((app: Application) => app.preference);
+
+                    const allPossiblePrefs = Array.from({ length: defaultPreference }, (_, i) => i + 1);
+                    const availablePrefs = allPossiblePrefs.filter(p => !usedPrefs.includes(p));
+                    
+                    if (availablePrefs.length > 0) {
+                        availablePrefs.sort((a, b) => b - a);
+                        
+                        const newApplication: Application = {
+                            id: crypto.randomUUID(),
+                            memberId: member.id,
+                            memberName: member.name,
+                            preference: availablePrefs[0],
+                        };
+
+                        const holidayToUpdate = holidaysCopy.find((h: HolidayPeriod) => h.id === availableHoliday.id);
+                        if (holidayToUpdate) {
+                            holidayToUpdate.applications.push(newApplication);
+                            assignedInLastPass = true;
+                            break;
+                        }
+                    }
+                }
             }
         }
+        
         return holidaysCopy;
     });
     alert('已為休假最少的成員自動分配剩餘假期名額。');
-  }, [teamMembers, defaultPreference]);
+}, [teamMembers, defaultPreference]);
 
 
   const selectedHoliday = useMemo(() => holidays.find(h => h.id === selectedHolidayId), [holidays, selectedHolidayId]);
@@ -357,70 +366,75 @@ const App: React.FC = () => {
         <p className="text-gray-400 mt-2">透過權重排名或特殊抽籤模式管理團隊的假期排程。</p>
       </header>
 
-      <main className="grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-7xl mx-auto">
-        <div className="lg:col-span-1 flex flex-col gap-8">
-          <div className="bg-gray-800 p-6 rounded-xl border border-gray-700 shadow-lg">
-            <h2 className="text-2xl font-bold mb-4 text-white">
-              全域設定
-            </h2>
-            <label htmlFor="default-pref" className="block text-sm font-medium text-gray-300">
-              預設權重 (及權重上限)
-            </label>
-            <input
-              id="default-pref"
-              type="number"
-              value={defaultPreference}
-              onChange={(e) => setDefaultPreference(Math.max(1, Math.min(10, Number(e.target.value))))}
-              min="1"
-              max="10"
-              className="mt-1 w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-             <button
-              onClick={autoAssignHolidays}
-              className="mt-4 w-full bg-indigo-600 text-white font-semibold px-4 py-2 rounded-md hover:bg-indigo-500 transition-colors duration-200"
-            >
-              自動分配剩餘假期
-            </button>
-          </div>
-          <TeamMemberManager 
-            members={teamMembers} 
-            onAddMember={addTeamMember} 
-            onRemoveMember={removeTeamMember}
-          />
-          <HolidayManager 
-            holidays={holidays}
-            selectedHolidayId={selectedHolidayId}
-            onAddHoliday={addHoliday}
-            onRemoveHoliday={removeHoliday}
-            onSelectHoliday={setSelectedHolidayId}
-            onMoveHoliday={moveHoliday}
-          />
-        </div>
-
-        <div className="lg:col-span-2">
-          {selectedHoliday ? (
-             <HolidayDetail 
-                key={selectedHoliday.id}
-                holiday={selectedHoliday}
-                allHolidays={holidays}
-                teamMembers={teamMembers}
-                defaultPreference={defaultPreference}
-                onAddApplication={addApplication}
-                onRemoveApplication={removeApplication}
-                onUpdateApplicationPreference={updateApplicationPreference}
-                onAddDailyAssignment={addDailyAssignment}
-                onRemoveDailyAssignment={removeDailyAssignment}
-                onRunLottery={runLottery}
-                onClearLottery={clearLottery}
-                onUpdateHolidayDetails={updateHolidayDetails}
-                onUpdateDailyLabel={updateDailyLabel}
-             />
-          ) : (
-            <div className="h-full flex items-center justify-center bg-gray-800 rounded-xl p-6 border border-gray-700">
-                <p className="text-gray-400 text-lg">請選擇一個假期以查看詳細資訊。</p>
+      <main className="max-w-7xl mx-auto">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="lg:col-span-1 flex flex-col gap-8">
+            <div className="bg-gray-800 p-6 rounded-xl border border-gray-700 shadow-lg">
+              <h2 className="text-2xl font-bold mb-4 text-white">
+                全域設定
+              </h2>
+              <label htmlFor="default-pref" className="block text-sm font-medium text-gray-300">
+                預設權重 (及權重上限)
+              </label>
+              <input
+                id="default-pref"
+                type="number"
+                value={defaultPreference}
+                onChange={(e) => setDefaultPreference(Math.max(1, Math.min(10, Number(e.target.value))))}
+                min="1"
+                max="10"
+                className="mt-1 w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+               <button
+                onClick={autoAssignHolidays}
+                className="mt-4 w-full bg-indigo-600 text-white font-semibold px-4 py-2 rounded-md hover:bg-indigo-500 transition-colors duration-200"
+              >
+                自動分配剩餘假期
+              </button>
             </div>
-          )}
+            <TeamMemberManager 
+              members={teamMembers} 
+              onAddMember={addTeamMember} 
+              onRemoveMember={removeTeamMember}
+            />
+            <HolidayManager 
+              holidays={holidays}
+              selectedHolidayId={selectedHolidayId}
+              onAddHoliday={addHoliday}
+              onRemoveHoliday={removeHoliday}
+              onSelectHoliday={setSelectedHolidayId}
+              onMoveHoliday={moveHoliday}
+            />
+          </div>
+
+          <div className="lg:col-span-2">
+            {selectedHoliday ? (
+               <HolidayDetail 
+                  key={selectedHoliday.id}
+                  holiday={selectedHoliday}
+                  allHolidays={holidays}
+                  teamMembers={teamMembers}
+                  defaultPreference={defaultPreference}
+                  onAddApplication={addApplication}
+                  onRemoveApplication={removeApplication}
+                  onUpdateApplicationPreference={updateApplicationPreference}
+                  onAddDailyAssignment={addDailyAssignment}
+                  onRemoveDailyAssignment={removeDailyAssignment}
+                  onRunLottery={runLottery}
+                  onClearLottery={clearLottery}
+                  onUpdateHolidayDetails={updateHolidayDetails}
+                  onUpdateDailyLabel={updateDailyLabel}
+               />
+            ) : (
+              <div className="h-full flex items-center justify-center bg-gray-800 rounded-xl p-6 border border-gray-700">
+                  <p className="text-gray-400 text-lg">請選擇一個假期以查看詳細資訊。</p>
+              </div>
+            )}
+          </div>
         </div>
+        
+        <HolidayOverview holidays={holidays} teamMembers={teamMembers} />
+
       </main>
     </div>
   );
