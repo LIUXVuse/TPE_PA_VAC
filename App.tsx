@@ -30,12 +30,14 @@ const App: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
 
-  // 從雲端載入資料
+  // 從 API 載入資料
   useEffect(() => {
     const fetchData = async () => {
       try {
         const response = await fetch('/api/data');
-        if (!response.ok) throw new Error('無法從伺服器獲取資料');
+        if (!response.ok) {
+          throw new Error(`無法從雲端獲取資料 (HTTP ${response.status})`);
+        }
         const data = await response.json();
         setTeamMembers(data.teamMembers || []);
         setHolidays(data.holidays || []);
@@ -44,7 +46,7 @@ const App: React.FC = () => {
           setSelectedHolidayId(data.holidays[0].id);
         }
       } catch (e) {
-        setError('無法從雲端載入資料。');
+        setError('載入資料失敗，請檢查網路連線或聯繫管理員。');
         console.error(e);
       } finally {
         setIsLoading(false);
@@ -62,11 +64,17 @@ const App: React.FC = () => {
     const handler = setTimeout(async () => {
       try {
         const stateToSave = { teamMembers, holidays, defaultPreference };
-        await fetch('/api/data', {
+        const response = await fetch('/api/data', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(stateToSave),
         });
+        if (!response.ok) {
+          throw new Error('儲存回應不成功');
+        }
+        if (error === "儲存失敗！") {
+          setError(null);
+        }
       } catch (e) {
         console.error("無法儲存資料到雲端", e);
         setError("儲存失敗！");
@@ -76,7 +84,7 @@ const App: React.FC = () => {
     }, 1000);
 
     return () => clearTimeout(handler);
-  }, [teamMembers, holidays, defaultPreference, isLoading]);
+  }, [teamMembers, holidays, defaultPreference, isLoading, error]);
 
 
   const addTeamMember = useCallback((name: string) => {
@@ -139,8 +147,10 @@ const App: React.FC = () => {
         const chineseDayLabels = ["除夕", "初一", "初二", "初三", "初四", "初五", "初六", "初七", "初八", "初九", "初十"];
         newHoliday.dailyLabels = {};
         newHoliday.dailyAssignments = [];
+        newHoliday.dailySlots = {};
         dates.forEach((date, index) => {
             newHoliday.dailyLabels[date] = chineseDayLabels[index] || `第 ${index + 1} 天`;
+            newHoliday.dailySlots[date] = slots > 0 ? slots : 1;
         });
     }
 
@@ -220,16 +230,22 @@ const App: React.FC = () => {
     const member = teamMembers.find(m => m.id === memberId);
     if (!member) return;
 
-    const newAssignment: DailyAssignment = {
-      date,
-      memberId,
-      memberName: member.name,
-      type: 'volunteer',
-    };
-
     setHolidays(prev =>
       prev.map(h => {
         if (h.id === holidayId) {
+          const memberAlreadyAssigned = (h.dailyAssignments || []).some(da => da.memberId === memberId);
+          if (memberAlreadyAssigned) {
+            alert(`${member.name} 已在此假期中排班，無法重複登記。`);
+            return h;
+          }
+          
+          const newAssignment: DailyAssignment = {
+            date,
+            memberId,
+            memberName: member.name,
+            type: 'volunteer',
+          };
+
           const existingAssignments = h.dailyAssignments || [];
           return {
             ...h,
@@ -241,13 +257,13 @@ const App: React.FC = () => {
     );
   }, [teamMembers]);
 
-  const removeDailyAssignment = useCallback((holidayId: string, date: string) => {
+  const removeDailyAssignment = useCallback((holidayId: string, date: string, memberId: string) => {
     setHolidays(prev =>
       prev.map(h => {
         if (h.id === holidayId) {
           return {
             ...h,
-            dailyAssignments: (h.dailyAssignments || []).filter(da => da.date !== date),
+            dailyAssignments: (h.dailyAssignments || []).filter(da => !(da.date === date && da.memberId === memberId)),
           };
         }
         return h;
@@ -259,20 +275,57 @@ const App: React.FC = () => {
     setHolidays(prev =>
       prev.map(h => {
         if (h.id !== holidayId || !h.isSpecialLottery) return h;
-
+  
         const dates = getDatesBetween(h.startDate, h.endDate);
-        const assignedMemberIds = new Set((h.dailyAssignments || []).map(da => da.memberId));
-        const unassignedDates = dates.filter(date => !(h.dailyAssignments || []).some(da => da.date === date));
+        const allVolunteers = (h.dailyAssignments || []).filter(da => da.type === 'volunteer');
+        const volunteeredMemberIds = new Set(allVolunteers.map(da => da.memberId));
         
-        let availableMembers = teamMembers.filter(m => !assignedMemberIds.has(m.id));
-        // Shuffle available members
-        availableMembers.sort(() => Math.random() - 0.5);
-
-        const newAssignments: DailyAssignment[] = [];
-        unassignedDates.forEach(date => {
-          if (availableMembers.length > 0) {
-            const member = availableMembers.pop()!;
-            newAssignments.push({
+        const membersWhoDidNotVolunteer = teamMembers.filter(m => !volunteeredMemberIds.has(m.id));
+  
+        const finalAssignments: DailyAssignment[] = [];
+        const lotteryPool: TeamMember[] = [];
+  
+        // 步驟 1: 處理每一天的自願者
+        dates.forEach(date => {
+          const requiredSlots = h.dailySlots?.[date] ?? 1;
+          const volunteersForThisDay = allVolunteers.filter(da => da.date === date);
+  
+          if (volunteersForThisDay.length > requiredSlots) {
+            // 自願者多於名額，需抽籤
+            const shuffledVolunteers = [...volunteersForThisDay].sort(() => Math.random() - 0.5);
+            const winners = shuffledVolunteers.slice(0, requiredSlots);
+            const losers = shuffledVolunteers.slice(requiredSlots);
+  
+            finalAssignments.push(...winners);
+            losers.forEach(loser => {
+              const member = teamMembers.find(m => m.id === loser.memberId);
+              if (member) lotteryPool.push(member);
+            });
+          } else {
+            // 自願者少於或等於名額，全部錄取
+            finalAssignments.push(...volunteersForThisDay);
+          }
+        });
+  
+        // 步驟 2: 找出所有剩餘的空缺
+        const openSlots: string[] = []; // 儲存需要補位的日期
+        dates.forEach(date => {
+          const requiredSlots = h.dailySlots?.[date] ?? 1;
+          const assignedCount = finalAssignments.filter(da => da.date === date).length;
+          const needed = requiredSlots - assignedCount;
+          for (let i = 0; i < needed; i++) {
+            openSlots.push(date);
+          }
+        });
+        
+        // 步驟 3: 用抽籤池填補空缺
+        const fullLotteryPool = [...lotteryPool, ...membersWhoDidNotVolunteer];
+        const shuffledPool = fullLotteryPool.sort(() => Math.random() - 0.5);
+  
+        openSlots.forEach(date => {
+          if (shuffledPool.length > 0) {
+            const member = shuffledPool.pop()!;
+            finalAssignments.push({
               date,
               memberId: member.id,
               memberName: member.name,
@@ -280,10 +333,10 @@ const App: React.FC = () => {
             });
           }
         });
-
+  
         return {
           ...h,
-          dailyAssignments: [...(h.dailyAssignments || []), ...newAssignments],
+          dailyAssignments: finalAssignments,
         };
       })
     );
@@ -381,6 +434,23 @@ const App: React.FC = () => {
     );
   }, []);
 
+  const updateDailySlots = useCallback((holidayId: string, date: string, newSlots: number) => {
+    setHolidays(prev =>
+      prev.map(h => {
+        if (h.id === holidayId) {
+          return {
+            ...h,
+            dailySlots: {
+              ...(h.dailySlots || {}),
+              [date]: newSlots,
+            },
+          };
+        }
+        return h;
+      })
+    );
+  }, []);
+
   const selectedHoliday = useMemo(() => {
     return holidays.find(h => h.id === selectedHolidayId) || null;
   }, [holidays, selectedHolidayId]);
@@ -467,6 +537,7 @@ const App: React.FC = () => {
                 onClearLottery={clearLottery}
                 onUpdateHolidayDetails={updateHolidayDetails}
                 onUpdateDailyLabel={updateDailyLabel}
+                onUpdateDailySlots={updateDailySlots}
               />
             ) : (
               <div className="bg-gray-800 p-6 rounded-xl border border-gray-700 shadow-lg h-full flex justify-center items-center">

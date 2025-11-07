@@ -78,7 +78,7 @@ const HolidayManager: React.FC<HolidayManagerProps> = ({ holidays, selectedHolid
             <input type="date" value={startDate} onChange={handleStartDateChange} required className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500" />
             <input type="date" value={endDate} min={startDate} onChange={e => setEndDate(e.target.value)} required className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
-          <input type="number" value={slots} onChange={e => setSlots(Number(e.target.value))} min="1" placeholder="可用名額" required className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          <input type="number" value={slots} onChange={e => setSlots(Number(e.target.value))} min="1" placeholder={isSpecial ? "每日所需人數" : "可用名額"} required className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500" />
           <div className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"

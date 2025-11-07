@@ -27,4 +27,5 @@ export interface HolidayPeriod {
   isSpecialLottery?: boolean;
   dailyAssignments?: DailyAssignment[];
   dailyLabels?: { [date: string]: string };
+  dailySlots?: { [date: string]: number };
 }

@@ -1,6 +1,6 @@
 // Fix: Import `useCallback` from 'react'.
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { HolidayPeriod, TeamMember, HolidayPeriod as AllHolidays, Application } from '../types';
+import { HolidayPeriod, TeamMember, HolidayPeriod as AllHolidays, Application, DailyAssignment } from '../types';
 import TrashIcon from './icons/TrashIcon';
 import PencilIcon from './icons/PencilIcon';
 
@@ -13,11 +13,12 @@ interface HolidayDetailProps {
   onRemoveApplication: (holidayId: string, applicationId: string) => void;
   onUpdateApplicationPreference: (holidayId: string, applicationId: string, newPreference: number) => void;
   onAddDailyAssignment: (holidayId: string, memberId: string, date: string) => void;
-  onRemoveDailyAssignment: (holidayId: string, date: string) => void;
+  onRemoveDailyAssignment: (holidayId: string, date: string, memberId: string) => void;
   onRunLottery: (holidayId: string) => void;
   onClearLottery: (holidayId: string) => void;
   onUpdateHolidayDetails: (holidayId: string, details: Partial<Pick<HolidayPeriod, 'name' | 'startDate' | 'endDate' | 'slots'>>) => void;
   onUpdateDailyLabel: (holidayId: string, date: string, newLabel: string) => void;
+  onUpdateDailySlots: (holidayId: string, date: string, newSlots: number) => void;
 }
 
 const getDatesBetween = (startDate: string, endDate: string): string[] => {
@@ -46,7 +47,8 @@ const HolidayDetail: React.FC<HolidayDetailProps> = ({
   onRunLottery, 
   onClearLottery,
   onUpdateHolidayDetails,
-  onUpdateDailyLabel
+  onUpdateDailyLabel,
+  onUpdateDailySlots
 }) => {
   const [selectedMemberId, setSelectedMemberId] = useState('');
   const [preference, setPreference] = useState<string>(String(defaultPreference));
@@ -211,8 +213,8 @@ const HolidayDetail: React.FC<HolidayDetailProps> = ({
         )}
       </div>
       { isEditingDetails ? (
-         <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 bg-gray-700/50 p-3 rounded-lg">
-            <div className="sm:col-span-3">
+         <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 bg-gray-700/50 p-3 rounded-lg">
+            <div className="sm:col-span-2">
               <label className="text-xs text-gray-400">假期名稱</label>
               <input type="text" name="name" value={editedDetails.name} onChange={handleDetailChange} className="w-full bg-gray-600 border border-gray-500 rounded-md px-2 py-1.5 text-white" />
             </div>
@@ -224,17 +226,21 @@ const HolidayDetail: React.FC<HolidayDetailProps> = ({
               <label className="text-xs text-gray-400">結束日</label>
               <input type="date" name="endDate" value={editedDetails.endDate} min={editedDetails.startDate} onChange={handleDetailChange} className="w-full bg-gray-600 border border-gray-500 rounded-md px-2 py-1.5 text-white" />
             </div>
-            <div>
-              <label className="text-xs text-gray-400">名額</label>
-              <input type="number" name="slots" value={editedDetails.slots} min="1" onChange={handleDetailChange} className="w-full bg-gray-600 border border-gray-500 rounded-md px-2 py-1.5 text-white" />
-            </div>
+            {!holiday.isSpecialLottery && (
+               <div>
+                 <label className="text-xs text-gray-400">名額</label>
+                 <input type="number" name="slots" value={editedDetails.slots} min="1" onChange={handleDetailChange} className="w-full bg-gray-600 border border-gray-500 rounded-md px-2 py-1.5 text-white" />
+               </div>
+            )}
          </div>
       ) : (
         <>
             <p className="text-gray-400">{holiday.startDate} to {holiday.endDate}</p>
-            <p className="text-gray-300 font-semibold mt-1">
-              可用名額： <span className="text-blue-400 text-xl">{holiday.slots}</span>
-            </p>
+            {!holiday.isSpecialLottery && (
+              <p className="text-gray-300 font-semibold mt-1">
+                可用名額： <span className="text-blue-400 text-xl">{holiday.slots}</span>
+              </p>
+            )}
         </>
       )}
     </div>
@@ -243,12 +249,22 @@ const HolidayDetail: React.FC<HolidayDetailProps> = ({
   if (holiday.isSpecialLottery) {
     const dates = useMemo(() => getDatesBetween(holiday.startDate, holiday.endDate), [holiday.startDate, holiday.endDate]);
     const assignmentsByDate = useMemo(() => {
-      const map = new Map();
-      holiday.dailyAssignments?.forEach(da => map.set(da.date, da));
+      const map = new Map<string, DailyAssignment[]>();
+      (holiday.dailyAssignments || []).forEach(da => {
+        if (!map.has(da.date)) {
+          map.set(da.date, []);
+        }
+        map.get(da.date)!.push(da);
+      });
       return map;
     }, [holiday.dailyAssignments]);
     
-    const canRunLottery = dates.some(date => !assignmentsByDate.has(date)) && availableMembers.length > 0;
+    const canRunLottery = dates.some(date => {
+        const assignments = assignmentsByDate.get(date) || [];
+        const requiredSlots = holiday.dailySlots?.[date] ?? 1;
+        return assignments.length < requiredSlots;
+      }) && availableMembers.length > 0;
+      
     const hasLotteryAssignments = holiday.dailyAssignments?.some(da => da.type === 'lottery');
 
     return (
@@ -290,63 +306,86 @@ const HolidayDetail: React.FC<HolidayDetailProps> = ({
           <h3 className="text-xl font-semibold mb-3 text-white">當日值班人員</h3>
           <div className="space-y-3 overflow-y-auto pr-2 flex-grow bg-gray-900/50 p-3 rounded-lg">
             {dates.map((date) => {
-              const assignment = assignmentsByDate.get(date);
+              const assignments = assignmentsByDate.get(date) || [];
+              const requiredSlots = holiday.dailySlots?.[date] ?? 1;
               const dayLabel = holiday.dailyLabels?.[date] || date;
               const isEditingLabel = editingLabel?.date === date;
               return (
-                <div key={date} className="grid grid-cols-3 gap-4 items-center bg-gray-700 p-3 rounded-md">
-                  <div className="font-semibold text-gray-300">
-                    <p>{date}</p>
-                    <div className="text-sm text-blue-300 flex items-center gap-2">
-                       {isEditingLabel ? (
-                          <input
-                            type="text"
-                            value={editingLabel.text}
-                            onChange={(e) => setEditingLabel({ ...editingLabel, text: e.target.value })}
-                            className="bg-gray-800 border-b border-blue-400 text-white w-full"
-                            onBlur={handleLabelSave}
-                            onKeyDown={(e) => e.key === 'Enter' && handleLabelSave()}
-                            autoFocus
-                          />
-                        ) : (
-                          <>
-                            <span>{dayLabel}</span>
-                            <button onClick={() => handleLabelEdit(date, dayLabel)} className="text-gray-500 hover:text-blue-300">
-                               <PencilIcon className="w-3.5 h-3.5"/>
-                            </button>
-                          </>
-                        )}
-                    </div>
-                  </div>
-                  <div className="col-span-2 flex items-center justify-between">
-                    {assignment ? (
-                      <div className="flex items-center gap-2">
-                        <span className={`px-2 py-1 text-xs font-bold rounded-full ${assignment.type === 'volunteer' ? 'bg-green-500/20 text-green-300' : 'bg-yellow-500/20 text-yellow-300'}`}>
-                          {assignment.type === 'volunteer' ? '自願' : '抽籤'}
-                        </span>
-                        <span className="text-white font-medium">{assignment.memberName}</span>
+                <div key={date} className="bg-gray-700 p-3 rounded-md">
+                   <div className="flex justify-between items-center mb-2">
+                     <div className="font-semibold text-gray-300">
+                        <p>{date}</p>
+                        <div className="text-sm text-blue-300 flex items-center gap-2">
+                           {isEditingLabel ? (
+                              <input
+                                type="text"
+                                value={editingLabel.text}
+                                onChange={(e) => setEditingLabel({ ...editingLabel, text: e.target.value })}
+                                className="bg-gray-800 border-b border-blue-400 text-white w-full"
+                                onBlur={handleLabelSave}
+                                onKeyDown={(e) => e.key === 'Enter' && handleLabelSave()}
+                                autoFocus
+                              />
+                            ) : (
+                              <>
+                                <span>{dayLabel}</span>
+                                <button onClick={() => handleLabelEdit(date, dayLabel)} className="text-gray-500 hover:text-blue-300">
+                                   <PencilIcon className="w-3.5 h-3.5"/>
+                                </button>
+                              </>
+                            )}
+                        </div>
                       </div>
-                    ) : (
-                      <span className="text-gray-500">待安排...</span>
-                    )}
-
-                    {assignment && assignment.type === 'volunteer' && (
-                       <button onClick={() => onRemoveDailyAssignment(holiday.id, date)} className="text-gray-500 hover:text-red-500 transition-colors">
-                         <TrashIcon className="w-5 h-5" />
-                       </button>
-                    )}
-                    {!assignment && selectedMemberId && (
-                       <button 
-                        onClick={() => {
-                          onAddDailyAssignment(holiday.id, selectedMemberId, date)
-                          setSelectedMemberId('');
-                        }}
-                        className="bg-blue-600 text-white text-sm font-semibold px-3 py-1 rounded-md hover:bg-blue-500 transition-colors"
-                       >
-                        自願此日
-                       </button>
-                    )}
-                  </div>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-gray-400">名額:</label>
+                        <input
+                           type="number"
+                           min="0"
+                           value={requiredSlots}
+                           onChange={(e) => onUpdateDailySlots(holiday.id, date, Number(e.target.value))}
+                           className="w-16 bg-gray-600 border border-gray-500 rounded-md px-2 py-1 text-white text-center"
+                        />
+                      </div>
+                   </div>
+                   <div className="bg-gray-800 p-2 rounded-md min-h-[50px] flex flex-col justify-center">
+                     {assignments.length > 0 ? (
+                       <div className="space-y-1">
+                         {assignments.map(assignment => (
+                            <div key={assignment.memberId} className="flex justify-between items-center">
+                              <div className="flex items-center gap-2">
+                                <span className={`px-2 py-1 text-xs font-bold rounded-full ${assignment.type === 'volunteer' ? 'bg-green-500/20 text-green-300' : 'bg-yellow-500/20 text-yellow-300'}`}>
+                                  {assignment.type === 'volunteer' ? '自願' : '抽籤'}
+                                </span>
+                                <span className="text-white font-medium">{assignment.memberName}</span>
+                              </div>
+                              {assignment.type === 'volunteer' && (
+                                <button onClick={() => onRemoveDailyAssignment(holiday.id, date, assignment.memberId)} className="text-gray-500 hover:text-red-500 transition-colors">
+                                  <TrashIcon className="w-4 h-4" />
+                                </button>
+                              )}
+                            </div>
+                         ))}
+                       </div>
+                     ) : (
+                       <span className="text-gray-500 text-center text-sm">待安排...</span>
+                     )}
+                   </div>
+                   <div className="flex justify-between items-center mt-2">
+                      <span className={`text-sm font-bold ${assignments.length >= requiredSlots ? 'text-green-400' : 'text-yellow-400'}`}>
+                        {assignments.length} / {requiredSlots} 人
+                      </span>
+                      {selectedMemberId && (
+                         <button 
+                          onClick={() => {
+                            onAddDailyAssignment(holiday.id, selectedMemberId, date)
+                            setSelectedMemberId('');
+                          }}
+                          className="bg-blue-600 text-white text-xs font-semibold px-3 py-1 rounded-md hover:bg-blue-500 transition-colors"
+                         >
+                          自願此日
+                         </button>
+                      )}
+                   </div>
                 </div>
               );
             })}
