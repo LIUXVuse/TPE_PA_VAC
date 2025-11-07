@@ -370,7 +370,7 @@ const HolidayDetail: React.FC<HolidayDetailProps> = ({
                        <span className="text-gray-500 text-center text-sm">待安排...</span>
                      )}
                    </div>
-                   <div className="flex justify-between items-center mt-2">
+                   <div className="flex justify-between items-center flex-wrap gap-2 mt-2">
                       <span className={`text-sm font-bold ${assignments.length >= requiredSlots ? 'text-green-400' : 'text-yellow-400'}`}>
                         {assignments.length} / {requiredSlots} 人
                       </span>
