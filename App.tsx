@@ -358,64 +358,147 @@ const App: React.FC = () => {
   
   const autoAssignHolidays = useCallback(() => {
     setHolidays(prevHolidays => {
-      let holidaysCopy = JSON.parse(JSON.stringify(prevHolidays));
-      let changed = true;
+        // FIX: A deep copy with `JSON.parse(JSON.stringify(...))` loses specific string literal types,
+        // causing `DailyAssignment['type']` to be inferred as `string` instead of `'volunteer' | 'lottery'`.
+        // A type assertion (`as HolidayPeriod[]`) is used to correct this, which is safe here because
+        // this function doesn't add or modify `dailyAssignments`.
+        let holidaysCopy = JSON.parse(JSON.stringify(prevHolidays)) as HolidayPeriod[];
+        const members: TeamMember[] = JSON.parse(JSON.stringify(teamMembers));
 
-      while (changed) {
-        changed = false;
+        const getMemberHolidayCounts = (currentHolidays: HolidayPeriod[]) => {
+            return members.map((member: TeamMember) => {
+                let count = 0;
+                const approvedHolidays: { holidayId: string, preference: number, applicationId: string }[] = [];
 
-        const memberHolidayCounts = teamMembers.map(member => {
-            const count = holidaysCopy.reduce((acc: number, h: HolidayPeriod) => {
-                if (h.isSpecialLottery) {
-                    return acc + (h.dailyAssignments?.filter(da => da.memberId === member.id).length || 0);
+                currentHolidays.forEach((h: HolidayPeriod) => {
+                    if (h.isSpecialLottery) return;
+                    
+                    const sortedApps = [...h.applications].sort((a, b) => a.preference - b.preference);
+                    const approvedApps = sortedApps.slice(0, h.slots);
+                    
+                    const memberApp = approvedApps.find(app => app.memberId === member.id);
+                    if (memberApp) {
+                        count++;
+                        approvedHolidays.push({ holidayId: h.id, preference: memberApp.preference, applicationId: memberApp.id });
+                    }
+                });
+                return { memberId: member.id, name: member.name, count, approvedHolidays };
+            });
+        };
+        
+        // --- PHASE 1: FAIR FILL ---
+        let openSlots: { holidayId: string }[] = [];
+        holidaysCopy.forEach((h: HolidayPeriod) => {
+            if (!h.isSpecialLottery) {
+                const needed = h.slots - h.applications.length;
+                for (let i = 0; i < needed; i++) {
+                    openSlots.push({ holidayId: h.id });
                 }
-                const sortedApps = [...h.applications].sort((a, b) => a.preference - b.preference);
-                const approvedApps = sortedApps.slice(0, h.slots);
-                return acc + (approvedApps.some(app => app.memberId === member.id) ? 1 : 0);
-            }, 0);
-            return { memberId: member.id, count };
-        }).sort((a, b) => a.count - b.count);
+            }
+        });
 
-        const leastHolidayMemberId = memberHolidayCounts[0]?.memberId;
-        if (!leastHolidayMemberId) break;
-
-        for (const holiday of holidaysCopy) {
-            if (holiday.isSpecialLottery || holiday.applications.length >= holiday.slots || !holiday.startDate) continue;
-
-            const memberAlreadyApplied = holiday.applications.some(app => app.memberId === leastHolidayMemberId);
-            if (memberAlreadyApplied) continue;
-
-            const holidayYear = new Date(holiday.startDate).getFullYear();
-            const usedPrefs = holidaysCopy
-                .filter((h: HolidayPeriod) => !h.isSpecialLottery && h.startDate && new Date(h.startDate).getFullYear() === holidayYear)
-                .flatMap((h: HolidayPeriod) => h.applications)
-                .filter((app: Application) => app.memberId === leastHolidayMemberId)
-                .map((app: Application) => app.preference);
-
-            const allPossiblePrefs = Array.from({ length: defaultPreference }, (_, i) => i + 1);
-            const availablePrefs = allPossiblePrefs.filter(p => !usedPrefs.includes(p));
+        let assignmentsMade = true;
+        while (openSlots.length > 0 && assignmentsMade) {
+            assignmentsMade = false;
+            const memberCounts = getMemberHolidayCounts(holidaysCopy);
+            const minCount = Math.min(...memberCounts.map(m => m.count));
+            let leastHolidayMembers = memberCounts.filter(m => m.count === minCount);
             
-            if (availablePrefs.length > 0) {
-                // 原本是取最大值(最低優先)，改為隨機選取一個可用的權重以增加公平性
-                const preferenceToUse = availablePrefs[Math.floor(Math.random() * availablePrefs.length)];
-                const member = teamMembers.find(m => m.id === leastHolidayMemberId);
-                if (member) {
-                    holiday.applications.push({
-                        id: crypto.randomUUID(),
-                        memberId: member.id,
-                        memberName: member.name,
-                        preference: preferenceToUse
-                    });
-                    changed = true;
-                    break; 
+            leastHolidayMembers.sort(() => Math.random() - 0.5);
+
+            for (const member of leastHolidayMembers) {
+                if (openSlots.length === 0) break;
+
+                for (let i = 0; i < openSlots.length; i++) {
+                    const slot = openSlots[i];
+                    const holiday = holidaysCopy.find((h: HolidayPeriod) => h.id === slot.holidayId)!;
+                    
+                    const alreadyApplied = holiday.applications.some((app: Application) => app.memberId === member.memberId);
+                    if (alreadyApplied) continue;
+
+                    const holidayYear = new Date(holiday.startDate).getFullYear();
+                    const usedPrefs = holidaysCopy
+                        .filter((h: HolidayPeriod) => !h.isSpecialLottery && h.startDate && new Date(h.startDate).getFullYear() === holidayYear)
+                        .flatMap((h: HolidayPeriod) => h.applications)
+                        .filter((app: Application) => app.memberId === member.memberId)
+                        .map((app: Application) => app.preference);
+
+                    const allPossiblePrefs = Array.from({ length: defaultPreference }, (_, i) => i + 1);
+                    const availablePrefs = allPossiblePrefs.filter((p: number) => !usedPrefs.includes(p));
+
+                    if (availablePrefs.length > 0) {
+                        const preferenceToUse = Math.max(...availablePrefs);
+                        holiday.applications.push({
+                            id: crypto.randomUUID(),
+                            memberId: member.memberId,
+                            memberName: member.name,
+                            preference: preferenceToUse
+                        });
+                        
+                        openSlots.splice(i, 1);
+                        assignmentsMade = true;
+                        break; 
+                    }
                 }
             }
         }
-      }
-      return holidaysCopy;
+
+        // --- PHASE 2: REBALANCING ---
+        let rebalancedInLoop = true;
+        while(rebalancedInLoop) {
+            rebalancedInLoop = false;
+            let memberCounts = getMemberHolidayCounts(holidaysCopy).sort((a,b) => b.count - a.count);
+            
+            if (memberCounts.length === 0) break;
+            
+            const richestMember = memberCounts[0];
+            const poorestMember = memberCounts[memberCounts.length - 1];
+
+            if (richestMember.count - poorestMember.count <= 1) {
+                break;
+            }
+
+            const transferableHolidays = richestMember.approvedHolidays.sort((a, b) => b.preference - a.preference);
+
+            for (const holidayToMove of transferableHolidays) {
+                 const holiday = holidaysCopy.find((h: HolidayPeriod) => h.id === holidayToMove.holidayId)!;
+                 
+                 const alreadyApplied = holiday.applications.some((app: Application) => app.memberId === poorestMember.memberId);
+                 if (alreadyApplied) continue;
+
+                 const holidayYear = new Date(holiday.startDate).getFullYear();
+                 const usedPrefs = holidaysCopy
+                        .filter((h: HolidayPeriod) => !h.isSpecialLottery && h.startDate && new Date(h.startDate).getFullYear() === holidayYear)
+                        .flatMap((h: HolidayPeriod) => h.applications)
+                        .filter((app: Application) => app.memberId === poorestMember.memberId)
+                        .map((app: Application) => app.preference);
+
+                 const allPossiblePrefs = Array.from({ length: defaultPreference }, (_, i) => i + 1);
+                 const availablePrefs = allPossiblePrefs.filter((p: number) => !usedPrefs.includes(p));
+
+                 if (availablePrefs.length > 0) {
+                    const prefForPoorest = Math.max(...availablePrefs);
+
+                    holiday.applications = holiday.applications.filter(app => app.id !== holidayToMove.applicationId);
+
+                    holiday.applications.push({
+                        id: crypto.randomUUID(),
+                        memberId: poorestMember.memberId,
+                        memberName: poorestMember.name,
+                        preference: prefForPoorest
+                    });
+                    
+                    rebalancedInLoop = true;
+                    break;
+                 }
+            }
+        }
+        
+        alert('已完成剩餘假期分配與公平性調整。');
+        return holidaysCopy;
     });
-    alert('已為休假最少的成員自動分配剩餘假期名額。');
   }, [teamMembers, defaultPreference]);
+
 
   const updateDailyLabel = useCallback((holidayId: string, date: string, newLabel: string) => {
     setHolidays(prev =>

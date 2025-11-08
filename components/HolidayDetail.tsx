@@ -259,11 +259,24 @@ const HolidayDetail: React.FC<HolidayDetailProps> = ({
       return map;
     }, [holiday.dailyAssignments]);
     
-    const canRunLottery = dates.some(date => {
+    const canRunLottery = useMemo(() => {
+      const isAnyDayUnderstaffed = dates.some(date => {
         const assignments = assignmentsByDate.get(date) || [];
         const requiredSlots = holiday.dailySlots?.[date] ?? 1;
         return assignments.length < requiredSlots;
-      }) && availableMembers.length > 0;
+      });
+
+      if (!isAnyDayUnderstaffed) return false;
+
+      const isAnyDayOverstaffed = dates.some(date => {
+        const assignments = assignmentsByDate.get(date) || [];
+        const requiredSlots = holiday.dailySlots?.[date] ?? 1;
+        return assignments.length > requiredSlots;
+      });
+      
+      // Lottery can run if there's a day to fill AND (there's unassigned members OR members can be moved from an overstaffed day)
+      return availableMembers.length > 0 || isAnyDayOverstaffed;
+    }, [dates, assignmentsByDate, holiday.dailySlots, availableMembers]);
       
     const hasLotteryAssignments = holiday.dailyAssignments?.some(da => da.type === 'lottery');
 
